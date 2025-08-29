@@ -8,7 +8,7 @@ def iso_now_utc_z():
     return dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00","Z")
 
 def layered_avg_spread(bids, asks, depth):
-    # bids/asks are lists of (price, size)
+    # bids/asks: [(price, size), ...]
     d = min(depth, len(bids), len(asks))
     if d == 0: return None
     return sum(asks[i][0] - bids[i][0] for i in range(d)) / d
@@ -18,7 +18,6 @@ def pct_of_mid(x, mid):
     return (x / mid) * 100.0
 
 def sum_depth_sizes(rows, depth):
-    # rows are (price, size)
     d = min(depth, len(rows))
     return sum(rows[i][1] for i in range(d)) if d > 0 else 0.0
 
@@ -35,7 +34,6 @@ async def main():
     ex_cfg = cfg["exchanges"].get(exchange)
     if not ex_cfg or not ex_cfg.get("enabled", False):
         raise RuntimeError(f"Exchange '{exchange}' not enabled in config.yaml")
-
     quote = ex_cfg["quote"]
 
     # adapter switch
@@ -58,33 +56,42 @@ async def main():
 
         minute = MinuteAverager()
         last_upload = 0.0
+        current_day = None
+        local_paths = {}  # asset -> local csv path for today
+
+        # helper: (re)initialize for a UTC day (create/download daily CSV; load JSON if exists)
+        def init_day(day_iso: str):
+            nonlocal local_paths
+            local_paths = {}
+            for asset in assets:
+                # local daily csv path
+                lp = GCS.local_daily_csv_path(base_dir, exchange, asset, day_iso)
+                if not lp.exists():
+                    # if a daily file already exists in GCS (restart), download to continue appending
+                    key_csv = GCS.daily_csv_key(exchange, asset, day_iso)
+                    if GCS.blob_exists(bucket, key_csv):
+                        GCS.download_blob_to_file(bucket, key_csv, lp)
+                    else:
+                        GCS.ensure_csv_header(lp)
+                local_paths[asset] = lp
+
+                # resume today's JSON if exists
+                key_json = GCS.daily_json_key(exchange, asset, day_iso)
+                existing = GCS.load_json_if_exists(bucket, key_json) or []
+                # replace series in memory; we don't try to reconstruct a partially open minute (fine for daily snapshot averaging)
+                minute.replace_series(asset, existing)
 
         while True:
-            tick = time.time()
             now_iso = iso_now_utc_z()
             now_dt = dt.datetime.fromisoformat(now_iso.replace("Z","+00:00"))
             day_iso = now_dt.date().isoformat()
-            hour = now_dt.hour
 
-            # ensure local hourly CSV paths exist (resume if shard already in GCS)
-            paths = {}
-            for asset in assets:
-                lp = GCS.local_hourly_path(base_dir, exchange, asset, day_iso, hour)
-                if not lp.exists():
-                    key = GCS.hourly_csv_key(exchange, asset, day_iso, hour)
-                    if GCS.blob_exists(bucket, key):
-                        # resume by downloading existing shard
-                        GCS.download_blob_to_file(bucket, key, lp)
-                    else:
-                        GCS.ensure_csv_header(lp)
-                paths[asset] = lp
+            # day rollover handling
+            if current_day != day_iso:
+                current_day = day_iso
+                init_day(day_iso)
 
-            # ensure today's 1min.json (if any) is loaded into memory (resume)
-            for asset in assets:
-                json_key = GCS.daily_json_key(exchange, asset, day_iso)
-                if asset not in minute.series:
-                    existing = GCS.load_json_if_exists(bucket, json_key) or []
-                    minute.replace_series(asset, existing)
+            tick = time.time()
 
             # fetch all assets concurrently
             async def fetch_one(asset):
@@ -107,10 +114,10 @@ async def main():
 
                 # spreads
                 raw = (best_ask - best_bid) if (best_ask is not None and best_bid is not None) else None
-                L5  = layered_avg_spread(ob["bids"], ob["asks"], 5)
-                L20 = layered_avg_spread(ob["bids"], ob["asks"], 20)
-                L50 = layered_avg_spread(ob["bids"], ob["asks"], 50)
-                L100= layered_avg_spread(ob["bids"], ob["asks"], 100)
+                L5   = layered_avg_spread(ob["bids"], ob["asks"], 5)
+                L20  = layered_avg_spread(ob["bids"], ob["asks"], 20)
+                L50  = layered_avg_spread(ob["bids"], ob["asks"], 50)
+                L100 = layered_avg_spread(ob["bids"], ob["asks"], 100)
 
                 s5   = pct_of_mid(L5, price)
                 s20  = pct_of_mid(L20, price)
@@ -121,7 +128,7 @@ async def main():
                 bidv50 = sum_depth_sizes(ob["bids"], 50)
                 askv50 = sum_depth_sizes(ob["asks"], 50)
 
-                # CSV
+                # CSV append (daily file)
                 row = [
                     now_iso, exchange, asset,
                     f"{price:.10f}" if price is not None else "",
@@ -135,25 +142,23 @@ async def main():
                     f"{bidv50:.10f}",
                     f"{askv50:.10f}",
                 ]
-                with paths[asset].open("a", newline="") as f:
+                with local_paths[asset].open("a", newline="") as f:
                     csv.writer(f).writerow(row)
 
-                # minute averages JSON
+                # 1‑minute averages (daily JSON content)
                 minute.add(exchange, asset, now_iso, price, raw, s5, s20, s50, s100, bidv50, askv50)
 
-            # periodic upload of current hour CSV + today's 1min.json
+            # periodic uploads: write today's CSV and JSON to final DAILY filenames
             if time.time() - last_upload >= upload_interval:
-                for asset in assets:
-                    # upload shard
-                    key = GCS.hourly_csv_key(exchange, asset, day_iso, hour)
-                    GCS.upload_file(bucket, key, paths[asset], content_type="text/csv")
-                    # upload daily JSON (static path; rewritten during the day)
-                    json_key = GCS.daily_json_key(exchange, asset, day_iso)
+                for asset, lp in local_paths.items():
+                    key_csv = GCS.daily_csv_key(exchange, asset, day_iso)
+                    GCS.upload_file(bucket, key_csv, lp, content_type="text/csv")
+                    key_json = GCS.daily_json_key(exchange, asset, day_iso)
                     rows = minute.series.get(asset, [])
-                    GCS.upload_json(bucket, json_key, rows)
+                    GCS.upload_json(bucket, key_json, rows)
                 last_upload = time.time()
 
-            # pacing to target 1 second cadence
+            # pacing to target cadence
             elapsed = time.time() - tick
             await asyncio.sleep(max(0.0, row_interval - elapsed))
 
