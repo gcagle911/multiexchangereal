@@ -1,0 +1,17 @@
+gcs_bucket: multicryptoreal
+
+row_interval_seconds: 1
+upload_interval_seconds: 60
+
+assets: [BTC, ETH, ADA]
+
+exchanges:
+  coinbase:
+    enabled: true
+    quote: USD
+    rate_limit_rps: 8
+
+  binanceus:
+    enabled: false
+    quote: USDT
+    rate_limit_rps: 8
