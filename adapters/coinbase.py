@@ -9,8 +9,8 @@ async def fetch_orderbook(client: httpx.AsyncClient, base: str, quote: str):
       "price": mid,
       "best_bid": float,
       "best_ask": float,
-      "bids": [p1, p2, ...],  # descending
-      "asks": [p1, p2, ...],  # ascending
+      "bids": [(price, size), ...],  # descending by price
+      "asks": [(price, size), ...],  # ascending by price
     }
     """
     product = f"{base}-{quote}"
@@ -20,15 +20,16 @@ async def fetch_orderbook(client: httpx.AsyncClient, base: str, quote: str):
     r.raise_for_status()
     data = r.json()
 
-    bids = [float(row[0]) for row in data.get("bids", [])]
-    asks = [float(row[0]) for row in data.get("asks", [])]
+    # Each row format: [price, size, num-orders]
+    bids = [(float(row[0]), float(row[1])) for row in data.get("bids", [])]
+    asks = [(float(row[0]), float(row[1])) for row in data.get("asks", [])]
 
-    # ensure sorted
-    bids.sort(reverse=True)
-    asks.sort()
+    # ensure sorted by price
+    bids.sort(key=lambda x: x[0], reverse=True)
+    asks.sort(key=lambda x: x[0])
 
-    best_bid = bids[0] if bids else None
-    best_ask = asks[0] if asks else None
+    best_bid = bids[0][0] if bids else None
+    best_ask = asks[0][0] if asks else None
     price = (best_bid + best_ask) / 2.0 if (best_bid is not None and best_ask is not None) else None
 
     return {
@@ -38,3 +39,4 @@ async def fetch_orderbook(client: httpx.AsyncClient, base: str, quote: str):
         "bids": bids,
         "asks": asks,
     }
+
