@@ -1,8 +1,10 @@
+from flask_cors import CORS
 import os, re
 from flask import Flask, Response, jsonify, request, abort
 from google.cloud import storage
 
 app = Flask(__name__)
+CORS(app)
 
 BUCKET = os.environ.get("GCS_BUCKET", "multicryptoreal")
 client = storage.Client()
