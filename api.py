@@ -65,6 +65,32 @@ def list_days():
 @app.get("/")
 def root():
     return cors(Response('{"ok":true}', mimetype="application/json"))
+@app.get("/list/exchanges")
+def list_exchanges():
+    # exchanges are the first path segment (e.g., coinbase/, binanceus/)
+    seen = set()
+    for blob in client.list_blobs(BUCKET, delimiter="/"):
+        pass
+    # The Storage client puts prefixes in _get_next_page_response()['prefixes'], but Flask route can't access it directly.
+    # Simpler: list all blobs and extract first segment.
+    for blob in client.list_blobs(BUCKET):
+        parts = blob.name.split("/", 2)
+        if len(parts) >= 1 and parts[0]:
+            seen.add(parts[0])
+    return cors(Response(response=jsonify({"exchanges": sorted(seen)}).data, mimetype="application/json"))
+
+@app.get("/list/assets")
+def list_assets():
+    ex = request.args.get("exchange","").lower()
+    if not ex:
+        abort(400, "param: exchange required")
+    assets = set()
+    prefix = f"{ex}/"
+    for blob in client.list_blobs(BUCKET, prefix=prefix):
+        parts = blob.name.split("/")
+        if len(parts) >= 2 and parts[1]:
+            assets.add(parts[1])
+    return cors(Response(response=jsonify({"exchange": ex, "assets": sorted(assets)}).data, mimetype="application/json"))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
