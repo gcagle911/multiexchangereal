@@ -1,23 +1,23 @@
-import csv, json, pathlib, datetime as dt
+import csv, json, pathlib
 from google.cloud import storage
 
 # ----- client -----
 def storage_client():
     return storage.Client()
 
-# ----- key helpers -----
-def hourly_csv_key(exchange: str, asset: str, day_iso: str, hour: int) -> str:
-    return f"{exchange}/{asset}/{day_iso}/seconds_H{hour:02d}.csv"
-
+# ----- DAILY keys (flat filenames per asset) -----
 def daily_csv_key(exchange: str, asset: str, day_iso: str) -> str:
-    return f"{exchange}/{asset}/{day_iso}/daily.csv"
+    # coinbase/ADA/ADA-2025-08-28.csv
+    return f"{exchange}/{asset}/{asset}-{day_iso}.csv"
 
 def daily_json_key(exchange: str, asset: str, day_iso: str) -> str:
-    return f"{exchange}/{asset}/{day_iso}/1min.json"
+    # coinbase/ADA/ADA-2025-08-28.json
+    return f"{exchange}/{asset}/{asset}-{day_iso}.json"
 
 # ----- local file helpers -----
-def local_hourly_path(base_dir: str | pathlib.Path, exchange: str, asset: str, day_iso: str, hour: int) -> pathlib.Path:
-    p = pathlib.Path(base_dir) / exchange / f"{asset}_{day_iso}_H{hour:02d}_{exchange}.csv"
+def local_daily_csv_path(base_dir: str | pathlib.Path, exchange: str, asset: str, day_iso: str) -> pathlib.Path:
+    # data/coinbase/ADA-2025-08-28_coinbase.csv (local only)
+    p = pathlib.Path(base_dir) / exchange / f"{asset}-{day_iso}_{exchange}.csv"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -59,20 +59,3 @@ def load_json_if_exists(bucket, key: str):
     if not b.exists(): return None
     data = b.download_as_bytes()
     return json.loads(data.decode("utf-8"))
-
-# ----- compose daily from 24 hourly shards (idempotent) -----
-def compose_daily_csv(bucket, exchange: str, asset: str, day_iso: str) -> bool:
-    prefix = f"{exchange}/{asset}/{day_iso}/"
-    parts = []
-    for h in range(24):
-        k = prefix + f"seconds_H{h:02d}.csv"
-        b = bucket.blob(k)
-        if b.exists():
-            parts.append(b)
-    if not parts:
-        return False
-    out = bucket.blob(prefix + "daily.csv")
-    out.compose(parts)     # 24 <= 32-part limit
-    out.cache_control = "no-cache, max-age=0"
-    out.patch()
-    return True
