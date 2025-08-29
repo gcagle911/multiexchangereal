@@ -3,7 +3,8 @@ gcs_bucket: multicryptoreal
 row_interval_seconds: 1
 upload_interval_seconds: 60
 
-assets: [BTC, ETH, ADA]
+# expanded asset list
+assets: [BTC, ETH, ADA, SOL, XRP, LTC, BNB, XLM, LINK]
 
 exchanges:
   coinbase:
@@ -12,6 +13,6 @@ exchanges:
     rate_limit_rps: 8
 
   binanceus:
-    enabled: false
+    enabled: true
     quote: USDT
     rate_limit_rps: 8
