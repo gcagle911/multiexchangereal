@@ -28,7 +28,7 @@ def ensure_csv_header(path: pathlib.Path):
             w.writerow([
                 "timestamp","exchange","asset",
                 "price","best_bid","best_ask","spread_raw",
-                "spread_L5_pct","spread_L20_pct","spread_L50_pct","spread_L100_pct",
+                "spread_L5_pct","spread_L20_pct","spread_L50_pct","spread_L100_pct","spread_L5000_pct",
                 "bid_volume_L50","ask_volume_L50"
             ])
 
