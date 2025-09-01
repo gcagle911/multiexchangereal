@@ -13,7 +13,7 @@ class MinuteAverager:
     Averages stored:
       - price (mid)
       - spread_raw
-      - spread_L5_pct, spread_L20_pct, spread_L50_pct, spread_L100_pct
+      - spread_L5_pct, spread_L20_pct, spread_L50_pct, spread_L100_pct, spread_L5000_pct
       - bid_volume_L50, ask_volume_L50   (order-book depth, asset units)
     Output entry example (per minute):
       {
@@ -26,6 +26,7 @@ class MinuteAverager:
         "spread_L20_pct_avg": ...,
         "spread_L50_pct_avg": ...,
         "spread_L100_pct_avg": ...,
+        "spread_L5000_pct_avg": ...,
         "bid_volume_L50_avg": ...,
         "ask_volume_L50_avg": ...
       }
@@ -35,7 +36,7 @@ class MinuteAverager:
         self.state = {}   # asset -> current minute accumulators
         self.series = {}  # asset -> list of daily minute entries
 
-    def _start(self, key, exchange, asset, price, spread_raw, s5, s20, s50, s100, bidv50, askv50):
+    def _start(self, key, exchange, asset, price, spread_raw, s5, s20, s50, s100, s5000, bidv50, askv50):
         def v(x): return float(x) if x is not None else None
         return {
             "key": key,
@@ -48,11 +49,12 @@ class MinuteAverager:
             "s20_sum": v(s20) or 0.0,
             "s50_sum": v(s50) or 0.0,
             "s100_sum": v(s100) or 0.0,
+            "s5000_sum": v(s5000) or 0.0,
             "bidv50_sum": v(bidv50) or 0.0,
             "askv50_sum": v(askv50) or 0.0,
         }
 
-    def _update(self, st, price, spread_raw, s5, s20, s50, s100, bidv50, askv50):
+    def _update(self, st, price, spread_raw, s5, s20, s50, s100, s5000, bidv50, askv50):
         def add(k, x):
             if x is None: return
             st[k] += float(x)
@@ -63,6 +65,7 @@ class MinuteAverager:
         add("s20_sum", s20)
         add("s50_sum", s50)
         add("s100_sum", s100)
+        add("s5000_sum", s5000)
         add("bidv50_sum", bidv50)
         add("askv50_sum", askv50)
 
@@ -78,11 +81,12 @@ class MinuteAverager:
             "spread_L20_pct_avg": st["s20_sum"] / n,
             "spread_L50_pct_avg": st["s50_sum"] / n,
             "spread_L100_pct_avg": st["s100_sum"] / n,
+            "spread_L5000_pct_avg": st["s5000_sum"] / n,
             "bid_volume_L50_avg": st["bidv50_sum"] / n,
             "ask_volume_L50_avg": st["askv50_sum"] / n,
         }
 
-    def add(self, exchange, asset, ts_iso, price, spread_raw, s5, s20, s50, s100, bidv50, askv50):
+    def add(self, exchange, asset, ts_iso, price, spread_raw, s5, s20, s50, s100, s5000, bidv50, askv50):
         key = minute_bucket(ts_iso)
         if asset not in self.series:
             self.series[asset] = []
@@ -94,9 +98,9 @@ class MinuteAverager:
                 if len(self.series[asset]) > 1440:
                     self.series[asset] = self.series[asset][-1440:]
             # start new minute
-            self.state[asset] = self._start(key, exchange, asset, price, spread_raw, s5, s20, s50, s100, bidv50, askv50)
+            self.state[asset] = self._start(key, exchange, asset, price, spread_raw, s5, s20, s50, s100, s5000, bidv50, askv50)
         else:
-            self._update(st, price, spread_raw, s5, s20, s50, s100, bidv50, askv50)
+            self._update(st, price, spread_raw, s5, s20, s50, s100, s5000, bidv50, askv50)
 
     def replace_series(self, asset, rows):
         self.series[asset] = rows

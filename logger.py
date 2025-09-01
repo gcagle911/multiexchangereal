@@ -118,11 +118,13 @@ async def main():
                 L20  = layered_avg_spread(ob["bids"], ob["asks"], 20)
                 L50  = layered_avg_spread(ob["bids"], ob["asks"], 50)
                 L100 = layered_avg_spread(ob["bids"], ob["asks"], 100)
+                L5000 = layered_avg_spread(ob["bids"], ob["asks"], 5000)
 
                 s5   = pct_of_mid(L5, price)
                 s20  = pct_of_mid(L20, price)
                 s50  = pct_of_mid(L50, price)
                 s100 = pct_of_mid(L100, price)
+                s5000 = pct_of_mid(L5000, price)
 
                 # depth "volume" (asset units) from top 50 levels
                 bidv50 = sum_depth_sizes(ob["bids"], 50)
@@ -139,6 +141,7 @@ async def main():
                     f"{s20:.10f}" if s20 is not None else "",
                     f"{s50:.10f}" if s50 is not None else "",
                     f"{s100:.10f}" if s100 is not None else "",
+                    f"{s5000:.10f}" if s5000 is not None else "",
                     f"{bidv50:.10f}",
                     f"{askv50:.10f}",
                 ]
@@ -146,7 +149,7 @@ async def main():
                     csv.writer(f).writerow(row)
 
                 # 1‑minute averages (daily JSON content)
-                minute.add(exchange, asset, now_iso, price, raw, s5, s20, s50, s100, bidv50, askv50)
+                minute.add(exchange, asset, now_iso, price, raw, s5, s20, s50, s100, s5000, bidv50, askv50)
 
             # periodic uploads: write today's CSV and JSON to final DAILY filenames
             if time.time() - last_upload >= upload_interval:

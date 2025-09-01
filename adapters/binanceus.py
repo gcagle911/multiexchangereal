@@ -15,10 +15,22 @@ async def fetch_orderbook(client: httpx.AsyncClient, base: str, quote: str):
     """
     symbol = f"{base}{quote}"
     url = f"{BASE}/api/v3/depth"
-    params = {"symbol": symbol.upper(), "limit": 100}
-    r = await client.get(url, params=params, timeout=5.0)
-    r.raise_for_status()
-    data = r.json()
+    # Try to fetch deep order book for 5000 levels, fall back to smaller limits if needed
+    last_exc = None
+    data = None
+    for lim in (5000, 1000, 500, 100):
+        try:
+            params = {"symbol": symbol.upper(), "limit": lim}
+            r = await client.get(url, params=params, timeout=5.0)
+            r.raise_for_status()
+            data = r.json()
+            break
+        except Exception as e:
+            last_exc = e
+            continue
+    if data is None:
+        # Re-raise the last exception if all attempts failed
+        raise last_exc
 
     bids = [(float(p), float(s)) for p, s in data.get("bids", [])]
     asks = [(float(p), float(s)) for p, s in data.get("asks", [])]
