@@ -1,7 +1,7 @@
 import httpx
 
-# Crypto.com uses BASE_QUOTE with underscore for spot.
-# Skip BNB on Crypto.com (not listed), include the rest.
+# Crypto.com uses BASE_QUOTE with underscore for spot (e.g., BTC_USDT).
+# You said CRO has all your assets except BNB; we’ll skip BNB explicitly.
 BASE_MAP = {
     "BTC": "BTC",
     "ETH": "ETH",
@@ -14,46 +14,48 @@ BASE_MAP = {
     # "BNB": "BNB",  # intentionally omitted for Crypto.com
 }
 
+EMPTY = {"price": None, "best_bid": None, "best_ask": None, "bids": [], "asks": []}
+
 async def _get_book(client: httpx.AsyncClient, instrument: str, depth: int = 150):
     url = "https://api.crypto.com/v2/public/get-book"
-    r = await client.get(url, params={"instrument_name": instrument, "depth": depth}, timeout=5.0)
-    r.raise_for_status()
-    j = r.json()
-    # Crypto.com success => code == 0 and result.data[0] exists
-    if j.get("code", 0) != 0:
+    try:
+        r = await client.get(url, params={"instrument_name": instrument, "depth": depth}, timeout=5.0)
+        r.raise_for_status()
+        j = r.json()
+        # Success => code == 0 and result.data exists
+        if j.get("code", 0) != 0:
+            return None
+        arr = j.get("result", {}).get("data", [])
+        return arr[0] if arr else None
+    except Exception:
         return None
-    arr = j.get("result", {}).get("data", [])
-    if not arr:
-        return None
-    return arr[0]
 
 async def fetch_orderbook(client: httpx.AsyncClient, base: str, quote: str):
-    # BNB not supported on Crypto.com spot in your set — return empty so logger skips.
-    if base.upper() == "BNB":
-        return {"price": None, "best_bid": None, "best_ask": None, "bids": [], "asks": []}
+    base_u = base.upper()
+    if base_u == "BNB":
+        return EMPTY  # skip BNB on Crypto.com per your note
 
-    base_sym = BASE_MAP.get(base.upper(), base.upper())
+    base_sym = BASE_MAP.get(base_u, base_u)
 
-    # Try requested quote first (likely USDT), then fallback to USD if empty.
+    # Prefer requested quote (likely USDT). Fallback to USD transparently.
     preferred = f"{base_sym}_{quote}".upper()
     fallback  = f"{base_sym}_USD"
 
     book = await _get_book(client, preferred, depth=150)
-    if book is None:
+    if not book:
         book = await _get_book(client, fallback, depth=150)
 
-    if book is None:
-        return {"price": None, "best_bid": None, "best_ask": None, "bids": [], "asks": []}
+    if not book:
+        return EMPTY
 
     bids = [(float(p), float(q)) for p, q in book.get("bids", [])]
     asks = [(float(p), float(q)) for p, q in book.get("asks", [])]
 
-    # Ensure sorted
+    # Sort & validate
     bids.sort(key=lambda x: x[0], reverse=True)
     asks.sort(key=lambda x: x[0])
-
     if not bids or not asks:
-        return {"price": None, "best_bid": None, "best_ask": None, "bids": [], "asks": []}
+        return EMPTY
 
     best_bid = bids[0][0]
     best_ask = asks[0][0]
