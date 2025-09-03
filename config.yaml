@@ -16,3 +16,18 @@ exchanges:
     enabled: true
     quote: USDT
     rate_limit_rps: 8
+
+  kraken:
+    enabled: true
+    quote: USD
+    rate_limit_rps: 6
+
+  cryptocom:
+    enabled: true
+    quote: USDT
+    rate_limit_rps: 6
+
+  bybit:
+    enabled: true
+    quote: USDT
+    rate_limit_rps: 6
