@@ -17,7 +17,7 @@ def layered_avg_spread(bids, asks, depth):
 def pct_of_mid(x, mid):
     if x is None or mid is None or mid <= 0:
         return None
-    return (x / mid) * 100.0  # percent of mid (not bps)
+    return (x / mid) * 100.0  # percent of mid
 
 def sum_depth_sizes(rows, depth):
     d = min(depth, len(rows))
@@ -35,7 +35,7 @@ def load_adapter(ex_name: str):
 async def main():
     cfg = yaml.safe_load(pathlib.Path("config.yaml").read_text())
     bucket_name = cfg["gcs_bucket"]
-    assets = [a.upper() for a in cfg["assets"]]
+    assets_global = [a.upper() for a in cfg["assets"]]
     row_interval = float(cfg.get("row_interval_seconds", 1))
     upload_interval = int(cfg.get("upload_interval_seconds", 60))
 
@@ -56,6 +56,8 @@ async def main():
         enabled[lname] = {
             "quote": ex_cfg["quote"],
             "fetch": load_adapter(lname),
+            # allow per-exchange symbol overrides; else fall back to global assets
+            "symbols": [s.upper() for s in ex_cfg.get("symbols", assets_global)],
         }
 
     if not enabled:
@@ -67,8 +69,8 @@ async def main():
 
     # HTTP client
     limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
-    async with httpx.AsyncClient(limits=limits, timeout=5.0) as client:
-        # local scratch base (kept per exchange)
+    timeout = httpx.Timeout(5.0)
+    async with httpx.AsyncClient(limits=limits, timeout=timeout) as client:
         base_dir = pathlib.Path("data")
         base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -84,16 +86,15 @@ async def main():
             """(Re)initialize per-day local files and minute series for all enabled exchanges."""
             nonlocal local_paths
             local_paths = {}
-            for ex_name in enabled.keys():
+            for ex_name, meta in enabled.items():
                 ex_dir = base_dir / ex_name
                 ex_dir.mkdir(parents=True, exist_ok=True)
                 local_paths[ex_name] = {}
 
-                for asset in assets:
+                for asset in meta["symbols"]:
                     # local daily csv path (per exchange)
                     lp = GCS.local_daily_csv_path(ex_dir, ex_name, asset, day_iso)
                     if not lp.exists():
-                        # resume from GCS if exists
                         key_csv = GCS.daily_csv_key(ex_name, asset, day_iso)
                         if GCS.blob_exists(bucket, key_csv):
                             GCS.download_blob_to_file(bucket, key_csv, lp)
@@ -111,7 +112,6 @@ async def main():
             now_dt = dt.datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
             day_iso = now_dt.date().isoformat()
 
-            # day rollover
             if current_day != day_iso:
                 current_day = day_iso
                 init_day(day_iso)
@@ -130,7 +130,7 @@ async def main():
             for ex_name, meta in enabled.items():
                 q = meta["quote"]
                 fn = meta["fetch"]
-                for asset in assets:
+                for asset in meta["symbols"]:
                     tasks.append(fetch_one(ex_name, fn, asset, q))
 
             results = await asyncio.gather(*tasks)
@@ -139,30 +139,30 @@ async def main():
             for ex_name, asset, ob, err in results:
                 if err or not ob:
                     continue
+                # >>> IMPORTANT: skip empty books to avoid blank rows
+                if not ob.get("bids") or not ob.get("asks"):
+                    continue
 
-                price = ob["price"]
+                price    = ob["price"]
                 best_bid = ob["best_bid"]
                 best_ask = ob["best_ask"]
 
-                # spreads (layered)
-                raw = (best_ask - best_bid) if (best_ask is not None and best_bid is not None) else None
-                L5 = layered_avg_spread(ob["bids"], ob["asks"], 5)
-                L20 = layered_avg_spread(ob["bids"], ob["asks"], 20)
-                L50 = layered_avg_spread(ob["bids"], ob["asks"], 50)
-                L100 = layered_avg_spread(ob["bids"], ob["asks"], 100)
+                raw   = (best_ask - best_bid) if (best_ask is not None and best_bid is not None) else None
+                L5    = layered_avg_spread(ob["bids"], ob["asks"], 5)
+                L20   = layered_avg_spread(ob["bids"], ob["asks"], 20)
+                L50   = layered_avg_spread(ob["bids"], ob["asks"], 50)
+                L100  = layered_avg_spread(ob["bids"], ob["asks"], 100)
                 L5000 = layered_avg_spread(ob["bids"], ob["asks"], 5000)
 
-                s5 = pct_of_mid(L5, price)
-                s20 = pct_of_mid(L20, price)
-                s50 = pct_of_mid(L50, price)
-                s100 = pct_of_mid(L100, price)
+                s5    = pct_of_mid(L5, price)
+                s20   = pct_of_mid(L20, price)
+                s50   = pct_of_mid(L50, price)
+                s100  = pct_of_mid(L100, price)
                 s5000 = pct_of_mid(L5000, price)
 
-                # depth "volume" (asset units) from top 50 levels
                 bidv50 = sum_depth_sizes(ob["bids"], 50)
                 askv50 = sum_depth_sizes(ob["asks"], 50)
 
-                # CSV append (per exchange daily file)
                 row = [
                     now_iso, ex_name, asset,
                     f"{price:.10f}" if price is not None else "",
@@ -181,23 +181,22 @@ async def main():
                 with lp.open("a", newline="") as f:
                     csv.writer(f).writerow(row)
 
-                # minute aggregation memory (key by ex:asset)
                 minute.add(ex_name, asset, now_iso, price, raw, s5, s20, s50, s100, s5000, bidv50, askv50)
 
             # periodic uploads (per exchange, per asset)
             if time.time() - last_upload >= upload_interval:
                 for ex_name in enabled.keys():
                     for asset, lp in local_paths[ex_name].items():
-                        key_csv = GCS.daily_csv_key(ex_name, asset, day_iso)
+                        key_csv  = GCS.daily_csv_key(ex_name, asset, day_iso)
                         GCS.upload_file(bucket, key_csv, lp, content_type="text/csv")
                         key_json = GCS.daily_json_key(ex_name, asset, day_iso)
-                        rows = minute.series.get(f"{ex_name}:{asset}", [])
+                        rows     = minute.series.get(f"{ex_name}:{asset}", [])
                         GCS.upload_json(bucket, key_json, rows)
                 last_upload = time.time()
 
-            # pacing
             elapsed = time.time() - tick
             await asyncio.sleep(max(0.0, row_interval - elapsed))
 
 if __name__ == "__main__":
     asyncio.run(main())
+
