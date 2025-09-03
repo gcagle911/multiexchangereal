@@ -24,7 +24,7 @@ exchanges:
 
   cryptocom:
     enabled: true
-    quote: USDT
+    quote: USD
     rate_limit_rps: 6
 
   bybit:
