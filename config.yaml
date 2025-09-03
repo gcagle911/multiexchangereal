@@ -23,11 +23,11 @@ exchanges:
     rate_limit_rps: 6
 
   cryptocom:
-    enabled: true
+    enabled: false
     quote: USD
     rate_limit_rps: 6
 
   bybit:
-    enabled: true
+    enabled: false
     quote: USDT
     rate_limit_rps: 6
