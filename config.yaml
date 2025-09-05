@@ -18,7 +18,7 @@ exchanges:
     rate_limit_rps: 8
 
   kraken:
-    enabled: true
+    enabled: false
     quote: USD
     rate_limit_rps: 6
 
