@@ -4,7 +4,7 @@ row_interval_seconds: 1
 upload_interval_seconds: 60
 
 # expanded asset list
-assets: [BTC, ETH, ADA, SOL, XRP, LTC, BNB, XLM, LINK]
+assets: [BTC, ETH, ADA, SOL, XRP, LINK]
 
 exchanges:
   coinbase:
@@ -12,22 +12,4 @@ exchanges:
     quote: USD
     rate_limit_rps: 8
 
-  binanceus:
-    enabled: true
-    quote: USDT
-    rate_limit_rps: 8
 
-  kraken:
-    enabled: false
-    quote: USD
-    rate_limit_rps: 6
-
-  cryptocom:
-    enabled: false
-    quote: USD
-    rate_limit_rps: 6
-
-  bybit:
-    enabled: false
-    quote: USDT
-    rate_limit_rps: 6
